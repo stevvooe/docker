@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,12 +19,12 @@ import (
 	"github.com/docker/libtrust"
 )
 
-func (s *TagStore) verifyManifest(manifestBytes []byte) (*registry.ManifestData, error) {
+func (s *TagStore) verifyManifest(eng *engine.Engine, manifestBytes []byte) (*registry.ManifestData, error) {
 	sig, err := libtrust.ParsePrettySignature(manifestBytes, "signatures")
 	if err != nil {
 		return nil, fmt.Errorf("error parsing payload: %s", err)
 	}
-	_, err = sig.Verify()
+	keys, err := sig.Verify()
 	if err != nil {
 		return nil, fmt.Errorf("error verifying payload: %s", err)
 	}
@@ -37,6 +38,32 @@ func (s *TagStore) verifyManifest(manifestBytes []byte) (*registry.ManifestData,
 	err = json.Unmarshal(payload, &manifest)
 	if err != nil {
 		return nil, fmt.Errorf("error unmarshalling manifest: %s", err)
+	}
+
+	for _, key := range keys {
+		job := eng.Job("trust_key_check")
+		b, err := key.MarshalJSON()
+		if err != nil {
+			return nil, fmt.Errorf("error marshalling public key: %s", err)
+		}
+		namespace := manifest.Name
+		if namespace[0] != '/' {
+			namespace = "/" + namespace
+		}
+		stdoutBuffer := bytes.NewBuffer(nil)
+
+		job.Args = append(job.Args, namespace)
+		job.Setenv("PublicKey", string(b))
+		job.SetenvInt("Permission", 0x03)
+		job.Stdout.Add(stdoutBuffer)
+		if err = job.Run(); err != nil {
+			return nil, fmt.Errorf("error running key check: %s", err)
+		}
+		result := engine.Tail(stdoutBuffer, 1)
+		log.Debugf("Key check result: %q", result)
+		if result != "verified" {
+			log.Infof("key not verified")
+		}
 	}
 
 	return &manifest, nil
@@ -98,7 +125,6 @@ func (s *TagStore) CmdPull(job *engine.Job) engine.Status {
 	// 1.a) validate the signature and payload of the manifest
 	// 2) then pull the blobs from the manifest
 	// 2.a) for docker-v1 compat, the map[sum]jsonBytes will need to be unpacked to determine the
-	//      image ID and path to store the tar and json in
 	if len(tag) == 0 {
 		tag = DEFAULTTAG
 	}
@@ -110,7 +136,7 @@ func (s *TagStore) CmdPull(job *engine.Job) engine.Status {
 			return job.Error(err)
 		}
 
-		manifest, err := s.verifyManifest(manifestBytes)
+		manifest, err := s.verifyManifest(job.Eng, manifestBytes)
 		if err != nil {
 			return job.Errorf("error verifying manifest: %s", err)
 		}
