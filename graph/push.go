@@ -1,15 +1,18 @@
 package graph
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
 	"path"
+	"strings"
 
 	"github.com/docker/docker/archive"
 	"github.com/docker/docker/engine"
 	"github.com/docker/docker/pkg/log"
+	"github.com/docker/docker/pkg/tarsum"
 	"github.com/docker/docker/registry"
 	"github.com/docker/docker/utils"
 )
@@ -201,6 +204,7 @@ func (s *TagStore) CmdPush(job *engine.Job) engine.Status {
 	)
 
 	tag := job.Getenv("tag")
+	manifest := job.Getenv("manifest")
 	job.GetenvJson("authConfig", authConfig)
 	job.GetenvJson("metaHeaders", &metaHeaders)
 	if _, err := s.poolAdd("push", localName); err != nil {
@@ -223,6 +227,79 @@ func (s *TagStore) CmdPush(job *engine.Job) engine.Status {
 	r, err2 := registry.NewSession(authConfig, registry.HTTPRequestFactory(metaHeaders), endpoint, false)
 	if err2 != nil {
 		return job.Error(err2)
+	}
+
+	var is_official bool
+	if endpoint.String() == registry.IndexServerAddress() {
+		if strings.HasPrefix(remoteName, "library/") {
+			is_official = true
+		}
+		if strings.IndexRune(remoteName, '/') == -1 {
+			is_official = true
+			remoteName = "library/" + remoteName
+		}
+	}
+
+	if len(tag) == 0 {
+		tag = DEFAULTTAG
+	}
+	// XXX TESTING
+	// 1) Check if TarSum of each layer exists /v2/
+	//  1.a) if 200, continue
+	//  1.b) if 300, then push the
+	//  1.c) if anything else, err
+	// 2) PUT the created/signed manifest
+	if is_official || endpoint.Version == registry.APIVersion2 {
+		// for each layer, check if it exists ...
+		// XXX wait this requires having the TarSum of the layer.tar first
+		// skip this step for now. Just push the layer every time for this naive implementation
+		//shouldPush, err := r.PostV2ImageMountBlob(imageName, sumType, sum string, token []string)
+
+		// XXX unfortunately this goes from child to parent,
+		// but the list of blobs in the manifest is expected to go parent to child
+		localRepo := s.Repositories[localName]
+		imgList, tagsByImage, err := s.getImageList(localRepo, tag)
+		_ = tagsByImage // not yet ...
+		for _, imgID := range imgList {
+			img, err = s.graph.Get(imgID)
+			if err != nil {
+				return job.Error(err)
+			}
+			log.Debugf("SUCH IMAGE %#v", img)
+
+			arch, err := img.TarLayer()
+			if err != nil {
+				return job.Error(err)
+			}
+			tsRdr, err := tarsum.NewTarSum(arch, false, tarsum.Version0)
+			if err != nil {
+				return job.Error(err)
+			}
+			log.Debugf("SUCH PUSH ID %s", img.ID)
+			serverChecksum, err := r.PutV2ImageBlob(remoteName, "tarsum+sha256", utils.ProgressReader(ioutil.NopCloser(tsRdr), int(img.Size), job.Stdout, sf, false, utils.TruncateID(img.ID), "Pushing"), nil)
+			if err != nil {
+				return job.Error(err)
+			}
+			localChecksum := tsRdr.Sum(nil)
+			if serverChecksum != localChecksum {
+				job.Stdout.Write(sf.FormatProgress(utils.TruncateID(img.ID), "Image push failed", nil))
+				return job.Error(fmt.Errorf("%q: failed checksum comparison. serverChecksum: %q, localChecksum: %q", remoteName, serverChecksum, localChecksum))
+			} else {
+				job.Stdout.Write(sf.FormatProgress(utils.TruncateID(img.ID), "Image successfully pushed", nil))
+				log.Debugf("imgID: %q, serverChecksum: %q, localChecksum: %q", img.ID, serverChecksum, localChecksum)
+			}
+
+		}
+
+		// Next, push the manifest
+		log.Debugf("SUCH MANIFEST %s:%s -- %s", localName, tag, manifest)
+		err = r.PutV2ImageManifest(remoteName, tag, bytes.NewReader([]byte(manifest)), nil)
+		if err != nil {
+			return job.Error(err)
+		}
+
+		// we should wrap up this CmdPush here
+		return engine.StatusOK
 	}
 
 	if err != nil {
