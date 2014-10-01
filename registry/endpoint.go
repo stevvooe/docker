@@ -5,12 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"net/url"
-	"os"
-	"strconv"
 	"strings"
+
+	"github.com/docker/docker/pkg/log"
 )
 
 // scans string for api version in the URL path. returns the trimmed hostname, if version found, string and API version.
@@ -50,28 +49,20 @@ func NewEndpoint(hostname string) (*Endpoint, error) {
 		return nil, err
 	}
 
-	if drv := os.Getenv("DOCKER_REGISTRY_VERSION"); len(drv) > 0 {
-		if v, err := strconv.Atoi(drv); err == nil {
-			endpoint.Version = APIVersion(v)
-		} else {
-			return nil, errors.New("bad registry version")
+	log.Debugf("Hostname: %s, parsed: %s", hostname, endpoint.String())
+
+	endpoint.URL.Scheme = "https"
+	if _, err := endpoint.Ping(); err != nil {
+		log.Debugf("Registry %s does not work (%s), falling back to http", endpoint, err)
+		// TODO: Check if http fallback is enabled
+		endpoint.URL.Scheme = "http"
+		if _, err = endpoint.Ping(); err != nil {
+			return nil, errors.New("Invalid Registry endpoint: " + err.Error())
 		}
-
-	}
-
-	// TODO find a way to do scheme determination, with preference for https
-	if len(endpoint.URL.Scheme) == 0 {
-		endpoint.URL.Scheme = determineEndpointScheme(endpoint)
 	}
 
 	return &endpoint, nil
 }
-
-func determineEndpointScheme(e Endpoint) string {
-	return DefaultScheme
-}
-
-var DefaultScheme = "https"
 
 type Endpoint struct {
 	URL     *url.URL
@@ -117,17 +108,17 @@ func (e Endpoint) Ping() (RegistryInfo, error) {
 		Standalone: true,
 	}
 	if err := json.Unmarshal(jsonString, &info); err != nil {
-		log.Printf("Error unmarshalling the _ping RegistryInfo: %s", err)
+		log.Debugf("Error unmarshalling the _ping RegistryInfo: %s", err)
 		// don't stop here. Just assume sane defaults
 	}
 	if hdr := resp.Header.Get("X-Docker-Registry-Version"); hdr != "" {
-		log.Printf("Registry version header: '%s'", hdr)
+		log.Debugf("Registry version header: '%s'", hdr)
 		info.Version = hdr
 	}
-	log.Printf("RegistryInfo.Version: %q", info.Version)
+	log.Debugf("RegistryInfo.Version: %q", info.Version)
 
 	standalone := resp.Header.Get("X-Docker-Registry-Standalone")
-	log.Printf("Registry standalone header: '%s'", standalone)
+	log.Debugf("Registry standalone header: '%s'", standalone)
 	// Accepted values are "true" (case-insensitive) and "1".
 	if strings.EqualFold(standalone, "true") || standalone == "1" {
 		info.Standalone = true
@@ -135,6 +126,6 @@ func (e Endpoint) Ping() (RegistryInfo, error) {
 		// there is a header set, and it is not "true" or "1", so assume fails
 		info.Standalone = false
 	}
-	log.Printf("RegistryInfo.Standalone: %q", info.Standalone)
+	log.Debugf("RegistryInfo.Standalone: %q", info.Standalone)
 	return info, nil
 }
