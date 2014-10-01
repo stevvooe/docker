@@ -2,11 +2,14 @@ package registry
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
 	"strings"
 )
 
@@ -38,10 +41,22 @@ func NewEndpoint(hostname string) (*Endpoint, error) {
 		trimmedHostname string
 		err             error
 	)
+	if !strings.HasPrefix(hostname, "http") {
+		hostname = "https://" + hostname
+	}
 	trimmedHostname, endpoint.Version = scanForApiVersion(hostname)
 	endpoint.URL, err = url.Parse(trimmedHostname)
 	if err != nil {
 		return nil, err
+	}
+
+	if drv := os.Getenv("DOCKER_REGISTRY_VERSION"); len(drv) > 0 {
+		if v, err := strconv.Atoi(drv); err == nil {
+			endpoint.Version = APIVersion(v)
+		} else {
+			return nil, errors.New("bad registry version")
+		}
+
 	}
 
 	// TODO find a way to do scheme determination, with preference for https
@@ -66,6 +81,10 @@ type Endpoint struct {
 // Get the formated URL for the root of this registry Endpoint
 func (e Endpoint) String() string {
 	return fmt.Sprintf("%s/v%d/", e.URL.String(), e.Version)
+}
+
+func (e Endpoint) VersionString(version APIVersion) string {
+	return fmt.Sprintf("%s/v%d/", e.URL.String(), version)
 }
 
 func (e Endpoint) Ping() (RegistryInfo, error) {
