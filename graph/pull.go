@@ -118,6 +118,9 @@ func (s *TagStore) CmdPull(job *engine.Job) engine.Status {
 		return job.Error(err)
 	}
 
+	var enableV2 bool
+	// TODO determine whether to enable V2 registry from environment
+
 	var isOfficial bool
 	if endpoint.VersionString(1) == registry.IndexServerAddress() {
 		// If pull "index.docker.io/foo/bar", it's stored locally under "foo/bar"
@@ -132,7 +135,7 @@ func (s *TagStore) CmdPull(job *engine.Job) engine.Status {
 		mirrors = s.mirrors
 	}
 
-	if isOfficial || endpoint.Version == registry.APIVersion2 {
+	if enableV2 && (isOfficial || endpoint.Version == registry.APIVersion2) {
 		j := job.Eng.Job("trust_update_base")
 		if err = j.Run(); err != nil {
 			return job.Errorf("error updating trust base graph: %s", err)
