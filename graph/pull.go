@@ -25,10 +25,6 @@ func (s *TagStore) verifyManifest(eng *engine.Engine, manifestBytes []byte) (*re
 	if err != nil {
 		return nil, false, fmt.Errorf("error parsing payload: %s", err)
 	}
-	keys, err := sig.Verify()
-	if err != nil {
-		return nil, false, fmt.Errorf("error verifying payload: %s", err)
-	}
 
 	payload, err := sig.Payload()
 	if err != nil {
@@ -43,35 +39,56 @@ func (s *TagStore) verifyManifest(eng *engine.Engine, manifestBytes []byte) (*re
 		return nil, false, fmt.Errorf("unsupported schema version: %d", manifest.SchemaVersion)
 	}
 
-	var verified bool
-	for _, key := range keys {
-		job := eng.Job("trust_key_check")
-		b, err := key.MarshalJSON()
-		if err != nil {
-			return nil, false, fmt.Errorf("error marshalling public key: %s", err)
-		}
-		namespace := manifest.Name
-		if namespace[0] != '/' {
-			namespace = "/" + namespace
-		}
-		stdoutBuffer := bytes.NewBuffer(nil)
-
-		job.Args = append(job.Args, namespace)
-		job.Setenv("PublicKey", string(b))
-		// Check key has read/write permission (0x03)
-		job.SetenvInt("Permission", 0x03)
-		job.Stdout.Add(stdoutBuffer)
-		if err = job.Run(); err != nil {
-			return nil, false, fmt.Errorf("error running key check: %s", err)
-		}
-		result := engine.Tail(stdoutBuffer, 1)
-		log.Debugf("Key check result: %q", result)
-		if result == "verified" {
-			verified = true
-		}
+	jws, err := sig.JWS()
+	if err != nil {
+		return nil, false, fmt.Errorf("error creating JWS: %s", err)
 	}
+	job := eng.Job("trust_verify_signature")
+	job.Setenv("JWS", string(jws))
+	stdoutBuffer := bytes.NewBuffer(nil)
+	job.Stdout.Add(stdoutBuffer)
+	if err = job.Run(); err != nil {
+		return nil, false, fmt.Errorf("error running signature check: %s", err)
+	}
+	result := engine.Tail(stdoutBuffer, 1)
+	log.Debugf("Key check result: %q", result)
 
-	return &manifest, verified, nil
+	return &manifest, result == "verified", nil
+
+	//keys, err := sig.Verify()
+	//if err != nil {
+	//	return nil, false, fmt.Errorf("error verifying payload: %s", err)
+	//}
+
+	//var verified bool
+	//for _, key := range keys {
+	//	job := eng.Job("trust_key_check")
+	//	b, err := key.MarshalJSON()
+	//	if err != nil {
+	//		return nil, false, fmt.Errorf("error marshalling public key: %s", err)
+	//	}
+	//	namespace := manifest.Name
+	//	if namespace[0] != '/' {
+	//		namespace = "/" + namespace
+	//	}
+	//	stdoutBuffer := bytes.NewBuffer(nil)
+
+	//	job.Args = append(job.Args, namespace)
+	//	job.Setenv("PublicKey", string(b))
+	//	// Check key has read/write permission (0x03)
+	//	job.SetenvInt("Permission", 0x03)
+	//	job.Stdout.Add(stdoutBuffer)
+	//	if err = job.Run(); err != nil {
+	//		return nil, false, fmt.Errorf("error running key check: %s", err)
+	//	}
+	//	result := engine.Tail(stdoutBuffer, 1)
+	//	log.Debugf("Key check result: %q", result)
+	//	if result == "verified" {
+	//		verified = true
+	//	}
+	//}
+
+	//return &manifest, verified, nil
 }
 
 func (s *TagStore) CmdPull(job *engine.Job) engine.Status {
@@ -145,11 +162,6 @@ func (s *TagStore) CmdPull(job *engine.Job) engine.Status {
 	}
 
 	if len(mirrors) == 0 && (isOfficial || endpoint.Version == registry.APIVersion2) {
-		j := job.Eng.Job("trust_update_base")
-		if err = j.Run(); err != nil {
-			return job.Errorf("error updating trust base graph: %s", err)
-		}
-
 		if err := s.pullV2Repository(job.Eng, r, job.Stdout, localName, remoteName, tag, sf, job.GetenvBool("parallel")); err == nil {
 			if err = job.Eng.Job("log", "pull", logName, "").Run(); err != nil {
 				log.Errorf("Error logging event 'pull' for %s: %s", logName, err)

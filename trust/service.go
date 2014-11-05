@@ -11,8 +11,7 @@ import (
 
 func (t *TrustStore) Install(eng *engine.Engine) error {
 	for name, handler := range map[string]engine.Handler{
-		"trust_key_check":   t.CmdCheckKey,
-		"trust_update_base": t.CmdUpdateBase,
+		"trust_verify_signature": t.CmdCheckSignature,
 	} {
 		if err := eng.Register(name, handler); err != nil {
 			return fmt.Errorf("Could not register %q: %v", name, err)
@@ -21,54 +20,67 @@ func (t *TrustStore) Install(eng *engine.Engine) error {
 	return nil
 }
 
-func (t *TrustStore) CmdCheckKey(job *engine.Job) engine.Status {
-	if n := len(job.Args); n != 1 {
-		return job.Errorf("Usage: %s NAMESPACE", job.Name)
-	}
+func (t *TrustStore) CmdCheckSignature(job *engine.Job) engine.Status {
 	var (
-		namespace = job.Args[0]
-		keyBytes  = job.Getenv("PublicKey")
+		signatureBytes = job.Getenv("JWS")
 	)
-
-	if keyBytes == "" {
-		return job.Errorf("Missing PublicKey")
+	if signatureBytes == "" {
+		return job.Errorf("Missing Signature")
 	}
-	pk, err := libtrust.UnmarshalPublicKeyJWK([]byte(keyBytes))
+
+	sig, err := libtrust.ParseJWS([]byte(signatureBytes))
 	if err != nil {
-		return job.Errorf("Error unmarshalling public key: %s", err)
+		return job.Error(err)
 	}
 
-	permission := uint16(job.GetenvInt("Permission"))
-	if permission == 0 {
-		permission = 0x03
+	// Verify based on signatures, use chain if passed
+	keys, err := sig.Verify()
+	if err != nil {
+		return job.Error(err)
 	}
 
-	t.RLock()
-	defer t.RUnlock()
-	if t.graph == nil {
+	err = t.fetchGraph([]byte(signatureBytes))
+	if err != nil {
+		// TODO check if err should be ignored and key check you be made anyway
+		return job.Error(err)
+	}
+
+	subject, action, err := sig.ExtractSubject()
+	if err != nil {
+		return job.Error(err)
+	}
+
+	// Check local graph
+	graph := t.getGraph()
+	if graph == nil {
 		job.Stdout.Write([]byte("no graph"))
 		return engine.StatusOK
 	}
 
-	// Check if any expired grants
-	verified, err := t.graph.Verify(pk, namespace, permission)
-	if err != nil {
-		return job.Errorf("Error verifying key to namespace: %s", namespace)
+	var expired bool
+	var verified bool
+	for _, key := range keys {
+		// Check if any expired grants
+		verifiedSignature, err := graph.Verify(key, subject, action)
+		if err != nil {
+			return job.Errorf("Error verifying key to namespace: %s", subject)
+		}
+		if !verifiedSignature {
+			log.Debugf("Verification failed for %s using key %s", subject, key.KeyID())
+		} else if t.expiration.Before(time.Now()) {
+			expired = true
+		} else {
+			verified = true
+		}
 	}
-	if !verified {
-		log.Debugf("Verification failed for %s using key %s", namespace, pk.KeyID())
-		job.Stdout.Write([]byte("not verified"))
-	} else if t.expiration.Before(time.Now()) {
+
+	if verified {
+		job.Stdout.Write([]byte("verified"))
+	} else if expired {
 		job.Stdout.Write([]byte("expired"))
 	} else {
-		job.Stdout.Write([]byte("verified"))
+		job.Stdout.Write([]byte("not verified"))
 	}
-
-	return engine.StatusOK
-}
-
-func (t *TrustStore) CmdUpdateBase(job *engine.Job) engine.Status {
-	t.fetch()
 
 	return engine.StatusOK
 }
