@@ -184,7 +184,7 @@ func (r *Session) PostV2ImageMountBlob(imageName, sumType, sum string, token []s
 	case 200:
 		// return something indicating no push needed
 		return true, nil
-	case 300:
+	case 404:
 		// return something indicating blob push needed
 		return false, nil
 	}
