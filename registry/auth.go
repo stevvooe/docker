@@ -53,6 +53,73 @@ type ConfigFile struct {
 	rootPath string
 }
 
+type RequestAuthorization struct {
+	authConfig       *AuthConfig
+	registryEndpoint *Endpoint
+	resource         string
+	scope            string
+	actions          []string
+}
+
+func NewRequestAuthorization(authConfig *AuthConfig, registryEndpoint *Endpoint, resource, scope string, actions []string) *RequestAuthorization {
+	return &RequestAuthorization{
+		authConfig:       authConfig,
+		registryEndpoint: registryEndpoint,
+		resource:         resource,
+		scope:            scope,
+		actions:          actions,
+	}
+}
+
+func (auth *RequestAuthorization) getToken() (string, error) {
+	// TODO check if already has token and before expiration
+	client := &http.Client{
+		Transport: &http.Transport{
+			DisableKeepAlives: true,
+			Proxy:             http.ProxyFromEnvironment},
+		CheckRedirect: AddRequiredHeadersToRedirectedRequests,
+	}
+	factory := HTTPRequestFactory(nil)
+
+	for _, challenge := range auth.registryEndpoint.AuthChallenges {
+		switch strings.ToLower(challenge.Scheme) {
+		case "basic":
+			// no token necessary
+		case "bearer":
+			log.Debugf("Getting bearer token with %s for %s", challenge.Parameters, auth.authConfig.Username)
+			params := map[string]string{}
+			for k, v := range challenge.Parameters {
+				params[k] = v
+			}
+			params["scope"] = fmt.Sprintf("%s:%s:%s", auth.resource, auth.scope, strings.Join(auth.actions, ","))
+			token, err := getToken(auth.authConfig.Username, auth.authConfig.Password, params, auth.registryEndpoint, client, factory)
+			if err != nil {
+				return "", err
+			}
+			// TODO cache token and set expiration to one minute from now
+
+			return token, nil
+		default:
+			log.Infof("Unsupported auth scheme: %q", challenge.Scheme)
+		}
+	}
+	// TODO no expiration, do not reattempt to get a token
+	return "", nil
+}
+
+func (auth *RequestAuthorization) Authorize(req *http.Request) error {
+	token, err := auth.getToken()
+	if err != nil {
+		return err
+	}
+	if token != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
+	} else if auth.authConfig.Username != "" && auth.authConfig.Password != "" {
+		req.SetBasicAuth(auth.authConfig.Username, auth.authConfig.Password)
+	}
+	return nil
+}
+
 func IndexServerAddress() string {
 	return INDEXSERVER
 }

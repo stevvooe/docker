@@ -228,7 +228,7 @@ func (ts *tarSum) Sum(extra []byte) string {
 		h.Write(extra)
 	}
 	for _, fis := range ts.sums {
-		log.Debugf("-->%s<--", fis.Sum())
+		//log.Debugf("-->%s<--", fis.Sum())
 		h.Write([]byte(fis.Sum()))
 	}
 	checksum := ts.Version().String() + "+" + ts.tHash.Name() + ":" + hex.EncodeToString(h.Sum(nil))
