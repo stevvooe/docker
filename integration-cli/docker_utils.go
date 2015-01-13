@@ -843,3 +843,11 @@ func readContainerFile(containerId, filename string) ([]byte, error) {
 
 	return content, nil
 }
+
+func setupRegistry(t *testing.T) func() {
+	reg, err := newTestRegistryV2(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return func() { reg.Close() }
+}
