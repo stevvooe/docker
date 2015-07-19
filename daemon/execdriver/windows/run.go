@@ -7,13 +7,11 @@ package windows
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/daemon/execdriver"
 	"github.com/microsoft/hcsshim"
-	"github.com/natefinch/npipe"
 )
 
 type layer struct {
@@ -42,6 +40,7 @@ type device struct {
 type containerInit struct {
 	SystemType              string
 	Name                    string
+	Owner                   string
 	IsDummy                 bool
 	VolumePath              string
 	Devices                 []device
@@ -54,9 +53,8 @@ type containerInit struct {
 func (d *Driver) Run(c *execdriver.Command, pipes *execdriver.Pipes, startCallback execdriver.StartCallback) (execdriver.ExitStatus, error) {
 
 	var (
-		term                           execdriver.Terminal
-		err                            error
-		inListen, outListen, errListen *npipe.PipeListener
+		term execdriver.Terminal
+		err  error
 	)
 
 	// Make sure the client isn't asking for options which aren't supported
@@ -68,6 +66,7 @@ func (d *Driver) Run(c *execdriver.Command, pipes *execdriver.Pipes, startCallba
 	cu := &containerInit{
 		SystemType:              "Container",
 		Name:                    c.ID,
+		Owner:                   "docker",
 		IsDummy:                 dummyMode,
 		VolumePath:              c.Rootfs,
 		IgnoreFlushesDuringBoot: c.FirstStart,
@@ -147,16 +146,6 @@ func (d *Driver) Run(c *execdriver.Command, pipes *execdriver.Pipes, startCallba
 		}
 	}()
 
-	// We use a different pipe name between real and dummy mode in the HCS
-	var serverPipeFormat, clientPipeFormat string
-	if dummyMode {
-		clientPipeFormat = `\\.\pipe\docker-run-%[1]s-%[2]s`
-		serverPipeFormat = clientPipeFormat
-	} else {
-		clientPipeFormat = `\\.\pipe\docker-run-%[2]s`
-		serverPipeFormat = `\\.\Containers\%[1]s\Device\NamedPipe\docker-run-%[2]s`
-	}
-
 	createProcessParms := hcsshim.CreateProcessParams{
 		EmulateConsole:   c.ProcessConfig.Tty,
 		WorkingDirectory: c.WorkingDir,
@@ -165,51 +154,6 @@ func (d *Driver) Run(c *execdriver.Command, pipes *execdriver.Pipes, startCallba
 
 	// Configure the environment for the process
 	createProcessParms.Environment = setupEnvironmentVariables(c.ProcessConfig.Env)
-
-	// Connect stdin
-	if pipes.Stdin != nil {
-		stdInPipe := fmt.Sprintf(serverPipeFormat, c.ID, "stdin")
-		createProcessParms.StdInPipe = fmt.Sprintf(clientPipeFormat, c.ID, "stdin")
-
-		// Listen on the named pipe
-		inListen, err = npipe.Listen(stdInPipe)
-		if err != nil {
-			logrus.Errorf("stdin failed to listen on %s err=%s", stdInPipe, err)
-			return execdriver.ExitStatus{ExitCode: -1}, err
-		}
-		defer inListen.Close()
-
-		// Launch a goroutine to do the accept. We do this so that we can
-		// cause an otherwise blocking goroutine to gracefully close when
-		// the caller (us) closes the listener
-		go stdinAccept(inListen, stdInPipe, pipes.Stdin)
-	}
-
-	// Connect stdout
-	stdOutPipe := fmt.Sprintf(serverPipeFormat, c.ID, "stdout")
-	createProcessParms.StdOutPipe = fmt.Sprintf(clientPipeFormat, c.ID, "stdout")
-
-	outListen, err = npipe.Listen(stdOutPipe)
-	if err != nil {
-		logrus.Errorf("stdout failed to listen on %s err=%s", stdOutPipe, err)
-		return execdriver.ExitStatus{ExitCode: -1}, err
-	}
-	defer outListen.Close()
-	go stdouterrAccept(outListen, stdOutPipe, pipes.Stdout)
-
-	// No stderr on TTY.
-	if !c.ProcessConfig.Tty {
-		// Connect stderr
-		stdErrPipe := fmt.Sprintf(serverPipeFormat, c.ID, "stderr")
-		createProcessParms.StdErrPipe = fmt.Sprintf(clientPipeFormat, c.ID, "stderr")
-		errListen, err = npipe.Listen(stdErrPipe)
-		if err != nil {
-			logrus.Errorf("stderr failed to listen on %s err=%s", stdErrPipe, err)
-			return execdriver.ExitStatus{ExitCode: -1}, err
-		}
-		defer errListen.Close()
-		go stdouterrAccept(errListen, stdErrPipe, pipes.Stderr)
-	}
 
 	// This should get caught earlier, but just in case - validate that we
 	// have something to run
@@ -228,12 +172,21 @@ func (d *Driver) Run(c *execdriver.Command, pipes *execdriver.Pipes, startCallba
 	logrus.Debugf("CommandLine: %s", createProcessParms.CommandLine)
 
 	// Start the command running in the container.
-	var pid uint32
-	pid, err = hcsshim.CreateProcessInComputeSystem(c.ID, createProcessParms)
-
+	pid, stdin, stdout, stderr, err := hcsshim.CreateProcessInComputeSystem(c.ID, pipes.Stdin != nil, true, !c.ProcessConfig.Tty, createProcessParms)
 	if err != nil {
 		logrus.Errorf("CreateProcessInComputeSystem() failed %s", err)
 		return execdriver.ExitStatus{ExitCode: -1}, err
+	}
+
+	// Now that the process has been launched, begin copying data to and from the named pipes for the std handles.
+	if stdin != nil {
+		stdinCopy(stdin, pipes.Stdin)
+	}
+	if stdout != nil {
+		stdouterrCopy(stdout, "stdout", pipes.Stdout)
+	}
+	if stderr != nil {
+		stdouterrCopy(stderr, "stderr", pipes.Stderr)
 	}
 
 	//Save the PID as we'll need this in Kill()
