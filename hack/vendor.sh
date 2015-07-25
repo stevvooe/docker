@@ -14,7 +14,7 @@ clone git github.com/gorilla/context 14f550f51a
 clone git github.com/gorilla/mux e444e69cbd
 clone git github.com/kr/pty 5cf931ef8f
 clone git github.com/mattn/go-sqlite3 b4142c444a8941d0d92b0b7103a24df9cd815e42
-clone git github.com/microsoft/hcsshim 4afa14d4ff91397d69e7beb3998018da98944f67
+clone git github.com/microsoft/hcsshim 236c4340489309791f2509409c3d8abf67102f1a
 clone git github.com/mistifyio/go-zfs v2.1.1
 clone git github.com/tchap/go-patricia v2.1.0
 clone git golang.org/x/net 3cffabab72adf04f8e3b01c5baf775361837b5fe https://github.com/golang/net.git

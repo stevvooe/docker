@@ -7,6 +7,7 @@ package windows
 import (
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strings"
 
 	"github.com/Sirupsen/logrus"
@@ -74,8 +75,13 @@ func (d *Driver) Run(c *execdriver.Command, pipes *execdriver.Pipes, startCallba
 	}
 
 	for i := 0; i < len(c.LayerPaths); i++ {
+		_, filename := filepath.Split(c.LayerPaths[i])
+		g, err := hcsshim.NameToGuid(filename)
+		if err != nil {
+			return execdriver.ExitStatus{ExitCode: -1}, err
+		}
 		cu.Layers = append(cu.Layers, layer{
-			ID:   hcsshim.NewGUID(c.LayerPaths[i]).ToString(),
+			ID:   g.ToString(),
 			Path: c.LayerPaths[i],
 		})
 	}
