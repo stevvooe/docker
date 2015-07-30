@@ -113,11 +113,10 @@ func NewGraph(root string, driver graphdriver.Driver) (*Graph, error) {
 	}
 
 	graph := &Graph{
-		root:             abspath,
-		idIndex:          truncindex.NewTruncIndex([]string{}),
-		driver:           driver,
-		retained:         &retainedLayers{layerHolders: make(map[string]map[string]struct{})},
-		tarSplitDisabled: false,
+		root:     abspath,
+		idIndex:  truncindex.NewTruncIndex([]string{}),
+		driver:   driver,
+		retained: &retainedLayers{layerHolders: make(map[string]map[string]struct{})},
 	}
 
 	// Windows does not currently support tarsplit functionality.
