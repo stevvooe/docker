@@ -11,12 +11,16 @@ import (
 	"github.com/docker/docker/reference"
 	"github.com/docker/docker/registry"
 	"github.com/docker/engine-api/types"
+	"github.com/opentracing/opentracing-go"
 	"golang.org/x/net/context"
 )
 
 // PullImage initiates a pull operation. image is the repository name to pull, and
 // tag may be either empty, or indicate a specific tag to pull.
 func (daemon *Daemon) PullImage(ctx context.Context, image, tag string, metaHeaders map[string][]string, authConfig *types.AuthConfig, outStream io.Writer) error {
+	sp, ctx := opentracing.StartSpanFromContext(ctx, "(*Daemon).PullImage")
+	defer sp.Finish()
+
 	// Special case: "pull -a" may send an image name with a
 	// trailing :. This is ugly, but let's not break API
 	// compatibility.
@@ -41,6 +45,7 @@ func (daemon *Daemon) PullImage(ctx context.Context, image, tag string, metaHead
 		}
 	}
 
+	sp.SetTag("reference", ref.String())
 	return daemon.pullImageWithReference(ctx, ref, metaHeaders, authConfig, outStream)
 }
 

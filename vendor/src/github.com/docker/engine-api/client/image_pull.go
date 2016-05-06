@@ -5,10 +5,10 @@ import (
 	"net/http"
 	"net/url"
 
-	"golang.org/x/net/context"
-
 	"github.com/docker/engine-api/types"
 	"github.com/docker/engine-api/types/reference"
+	"github.com/opentracing/opentracing-go"
+	"golang.org/x/net/context"
 )
 
 // ImagePull requests the docker host to pull an image from a remote registry.
@@ -20,6 +20,9 @@ import (
 // - if not in trusted content, ref is used to pass the whole reference, and tag is empty
 // - if in trusted content, ref is used to pass the reference name, and tag for the digest
 func (cli *Client) ImagePull(ctx context.Context, ref string, options types.ImagePullOptions) (io.ReadCloser, error) {
+	sp, ctx := opentracing.StartSpanFromContext(ctx, "(*Client).ImagePull")
+	defer sp.Finish()
+
 	repository, tag, err := reference.Parse(ref)
 	if err != nil {
 		return nil, err

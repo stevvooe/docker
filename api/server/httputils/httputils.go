@@ -7,9 +7,8 @@ import (
 	"net/http"
 	"strings"
 
-	"golang.org/x/net/context"
-
 	"github.com/docker/docker/api"
+	"golang.org/x/net/context"
 )
 
 // APIVersionKey is the client's requested API version.

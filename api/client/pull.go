@@ -4,14 +4,14 @@ import (
 	"errors"
 	"fmt"
 
-	"golang.org/x/net/context"
-
 	Cli "github.com/docker/docker/cli"
 	"github.com/docker/docker/pkg/jsonmessage"
 	flag "github.com/docker/docker/pkg/mflag"
 	"github.com/docker/docker/reference"
 	"github.com/docker/docker/registry"
 	"github.com/docker/engine-api/types"
+	"github.com/opentracing/opentracing-go"
+	"golang.org/x/net/context"
 )
 
 // CmdPull pulls an image or a repository from the registry.
@@ -25,6 +25,10 @@ func (cli *DockerCli) CmdPull(args ...string) error {
 
 	cmd.ParseFlags(args, true)
 	remote := cmd.Arg(0)
+	ctx := context.Background()
+
+	sp, ctx := opentracing.StartSpanFromContext(ctx, "(*DockerCli).CmdPull")
+	defer sp.Finish()
 
 	distributionRef, err := reference.ParseNamed(remote)
 	if err != nil {
@@ -63,10 +67,10 @@ func (cli *DockerCli) CmdPull(args ...string) error {
 		return cli.trustedPull(repoInfo, registryRef, authConfig, requestPrivilege)
 	}
 
-	return cli.imagePullPrivileged(authConfig, distributionRef.String(), requestPrivilege)
+	return cli.imagePullPrivileged(ctx, authConfig, distributionRef.String(), requestPrivilege)
 }
 
-func (cli *DockerCli) imagePullPrivileged(authConfig types.AuthConfig, ref string, requestPrivilege types.RequestPrivilegeFunc) error {
+func (cli *DockerCli) imagePullPrivileged(ctx context.Context, authConfig types.AuthConfig, ref string, requestPrivilege types.RequestPrivilegeFunc) error {
 
 	encodedAuth, err := encodeAuthToBase64(authConfig)
 	if err != nil {
@@ -77,7 +81,7 @@ func (cli *DockerCli) imagePullPrivileged(authConfig types.AuthConfig, ref strin
 		PrivilegeFunc: requestPrivilege,
 	}
 
-	responseBody, err := cli.client.ImagePull(context.Background(), ref, options)
+	responseBody, err := cli.client.ImagePull(ctx, ref, options)
 	if err != nil {
 		return err
 	}

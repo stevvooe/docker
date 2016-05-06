@@ -11,9 +11,21 @@ import (
 	flag "github.com/docker/docker/pkg/mflag"
 	"github.com/docker/docker/pkg/term"
 	"github.com/docker/docker/utils"
+	"github.com/lightstep/lightstep-tracer-go"
+	"github.com/opentracing/opentracing-go"
 )
 
 func main() {
+	lsAPIKey := os.Getenv("LIGHTSTEP_API_KEY")
+	if lsAPIKey != "" {
+		opentracing.InitGlobalTracer(lightstep.NewTracer(lightstep.Options{
+			AccessToken: lsAPIKey,
+		}))
+	}
+
+	defer func() {
+		lightstep.FlushLightStepTracer(opentracing.GlobalTracer())
+	}()
 	// Set terminal emulation based on platform as required.
 	stdin, stdout, stderr := term.StdStreams()
 

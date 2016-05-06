@@ -317,6 +317,7 @@ func notaryError(repoName string, err error) error {
 
 func (cli *DockerCli) trustedPull(repoInfo *registry.RepositoryInfo, ref registry.Reference, authConfig types.AuthConfig, requestPrivilege types.RequestPrivilegeFunc) error {
 	var refs []target
+	ctx := context.Background()
 
 	notaryRepo, err := cli.getNotaryRepository(repoInfo, authConfig, "pull")
 	if err != nil {
@@ -377,7 +378,7 @@ func (cli *DockerCli) trustedPull(repoInfo *registry.RepositoryInfo, ref registr
 		if err != nil {
 			return err
 		}
-		if err := cli.imagePullPrivileged(authConfig, ref.String(), requestPrivilege); err != nil {
+		if err := cli.imagePullPrivileged(ctx, authConfig, ref.String(), requestPrivilege); err != nil {
 			return err
 		}
 

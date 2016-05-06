@@ -405,6 +405,8 @@ func initRouter(s *apiserver.Server, d *daemon.Daemon) {
 func (cli *DaemonCli) initMiddlewares(s *apiserver.Server, cfg *apiserver.Config) {
 	v := cfg.Version
 
+	s.UseMiddleware(middleware.TracerMiddleware{})
+
 	vm := middleware.NewVersionMiddleware(v, api.DefaultVersion, api.MinVersion)
 	s.UseMiddleware(vm)
 

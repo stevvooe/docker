@@ -29,6 +29,7 @@ import (
 	"github.com/docker/docker/pkg/stringid"
 	"github.com/docker/docker/reference"
 	"github.com/docker/docker/registry"
+	"github.com/opentracing/opentracing-go"
 	"golang.org/x/net/context"
 )
 
@@ -57,6 +58,9 @@ type v2Puller struct {
 }
 
 func (p *v2Puller) Pull(ctx context.Context, ref reference.Named) (err error) {
+	sp, ctx := opentracing.StartSpanFromContext(ctx, "(*v2Puller).Pull")
+	defer sp.Finish()
+
 	// TODO(tiborvass): was ReceiveTimeout
 	p.repo, p.confirmedV2, err = NewV2Repository(ctx, p.repoInfo, p.endpoint, p.config.MetaHeaders, p.config.AuthConfig, "pull")
 	if err != nil {
@@ -81,6 +85,9 @@ func (p *v2Puller) Pull(ctx context.Context, ref reference.Named) (err error) {
 }
 
 func (p *v2Puller) pullV2Repository(ctx context.Context, ref reference.Named) (err error) {
+	sp, ctx := opentracing.StartSpanFromContext(ctx, "(*v2Puller).pullV2Repository")
+	defer sp.Finish()
+
 	var layersDownloaded bool
 	if !reference.IsNameOnly(ref) {
 		layersDownloaded, err = p.pullV2Tag(ctx, ref)
@@ -324,6 +331,9 @@ func (ld *v2LayerDescriptor) Registered(diffID layer.DiffID) {
 }
 
 func (p *v2Puller) pullV2Tag(ctx context.Context, ref reference.Named) (tagUpdated bool, err error) {
+	sp, ctx := opentracing.StartSpanFromContext(ctx, "(*v2Puller).pullV2Tag")
+	defer sp.Finish()
+
 	manSvc, err := p.repo.Manifests(ctx)
 	if err != nil {
 		return false, err
@@ -411,6 +421,9 @@ func (p *v2Puller) pullV2Tag(ctx context.Context, ref reference.Named) (tagUpdat
 }
 
 func (p *v2Puller) pullSchema1(ctx context.Context, ref reference.Named, unverifiedManifest *schema1.SignedManifest) (imageID image.ID, manifestDigest digest.Digest, err error) {
+	sp, ctx := opentracing.StartSpanFromContext(ctx, "(*v2Puller).pullSchema1")
+	defer sp.Finish()
+
 	var verifiedManifest *schema1.Manifest
 	verifiedManifest, err = verifySchema1Manifest(unverifiedManifest, ref)
 	if err != nil {

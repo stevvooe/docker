@@ -12,6 +12,7 @@ import (
 	"github.com/docker/docker/pkg/archive"
 	"github.com/docker/docker/pkg/ioutils"
 	"github.com/docker/docker/pkg/progress"
+	"github.com/opentracing/opentracing-go"
 	"golang.org/x/net/context"
 )
 
@@ -83,6 +84,9 @@ type DownloadDescriptorWithRegistered interface {
 // registered in the appropriate order.  The caller must call the returned
 // release function once it is is done with the returned RootFS object.
 func (ldm *LayerDownloadManager) Download(ctx context.Context, initialRootFS image.RootFS, layers []DownloadDescriptor, progressOutput progress.Output) (image.RootFS, func(), error) {
+	sp, ctx := opentracing.StartSpanFromContext(ctx, "(*LayerDownloadManager).Download")
+	defer sp.Finish()
+
 	var (
 		topLayer       layer.Layer
 		topDownload    *downloadTransfer
@@ -125,7 +129,7 @@ func (ldm *LayerDownloadManager) Download(ctx context.Context, initialRootFS ima
 		if existingDownload, ok := downloadsByKey[key]; ok {
 			xferFunc := ldm.makeDownloadFuncFromDownload(descriptor, existingDownload, topDownload)
 			defer topDownload.Transfer.Release(watcher)
-			topDownloadUncasted, watcher = ldm.tm.Transfer(transferKey, xferFunc, progressOutput)
+			topDownloadUncasted, watcher = ldm.tm.Transfer(ctx, transferKey, xferFunc, progressOutput)
 			topDownload = topDownloadUncasted.(*downloadTransfer)
 			continue
 		}
@@ -140,7 +144,7 @@ func (ldm *LayerDownloadManager) Download(ctx context.Context, initialRootFS ima
 		} else {
 			xferFunc = ldm.makeDownloadFunc(descriptor, rootFS.ChainID(), nil)
 		}
-		topDownloadUncasted, watcher = ldm.tm.Transfer(transferKey, xferFunc, progressOutput)
+		topDownloadUncasted, watcher = ldm.tm.Transfer(ctx, transferKey, xferFunc, progressOutput)
 		topDownload = topDownloadUncasted.(*downloadTransfer)
 		downloadsByKey[key] = topDownload
 	}

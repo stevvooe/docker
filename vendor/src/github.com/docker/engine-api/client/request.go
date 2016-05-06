@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
 
 	"github.com/docker/engine-api/client/transport/cancellable"
+	"github.com/opentracing/opentracing-go"
 	"golang.org/x/net/context"
 )
 
@@ -84,7 +86,7 @@ func (cli *Client) sendClientRequest(ctx context.Context, method, path string, q
 		body = bytes.NewReader([]byte{})
 	}
 
-	req, err := cli.newRequest(method, path, query, body, headers)
+	req, err := cli.newRequest(ctx, method, path, query, body, headers)
 	req.URL.Host = cli.addr
 	req.URL.Scheme = cli.transport.Scheme()
 
@@ -128,7 +130,7 @@ func (cli *Client) sendClientRequest(ctx context.Context, method, path string, q
 	return serverResp, nil
 }
 
-func (cli *Client) newRequest(method, path string, query url.Values, body io.Reader, headers map[string][]string) (*http.Request, error) {
+func (cli *Client) newRequest(ctx context.Context, method, path string, query url.Values, body io.Reader, headers map[string][]string) (*http.Request, error) {
 	apiPath := cli.getAPIPath(path, query)
 	req, err := http.NewRequest(method, apiPath, body)
 	if err != nil {
@@ -145,6 +147,16 @@ func (cli *Client) newRequest(method, path string, query url.Values, body io.Rea
 		for k, v := range headers {
 			req.Header[k] = v
 		}
+	}
+
+	tracer := opentracing.GlobalTracer()
+	sp := opentracing.SpanFromContext(ctx)
+	carrier := opentracing.HTTPHeaderTextMapCarrier(req.Header)
+	if err := tracer.Inject(
+		sp,
+		opentracing.TextMap,
+		carrier); err != nil {
+		log.Println(err)
 	}
 
 	return req, nil

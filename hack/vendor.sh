@@ -91,4 +91,11 @@ clone git google.golang.org/cloud dae7e3d993bc3812a2185af60552bb6b847e52a0 https
 
 # containerd
 clone git github.com/docker/containerd v0.2.1
+
+clone git github.com/opentracing/opentracing-go 9b674e7920712a5317aef71befd1940335cd3d0e
+clone git github.com/lightstep/lightstep-tracer-go 623c440f9b144648fdc4526262f22e25fc46e77e
+clone git github.com/opentracing/basictracer-go 8037d926355bd3bc9b503652580a71a030995575
+clone git github.com/gogo/protobuf 43a2e0b1c32252bfbbdf81f7faa7a88fb3fa4028
+
+
 clean

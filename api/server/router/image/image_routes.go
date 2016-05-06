@@ -15,6 +15,7 @@ import (
 	"github.com/docker/engine-api/types"
 	"github.com/docker/engine-api/types/container"
 	"github.com/docker/engine-api/types/versions"
+	"github.com/opentracing/opentracing-go"
 	"golang.org/x/net/context"
 )
 
@@ -68,6 +69,9 @@ func (s *imageRouter) postCommit(ctx context.Context, w http.ResponseWriter, r *
 
 // Creates an image from Pull or from Import
 func (s *imageRouter) postImagesCreate(ctx context.Context, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+	sp, ctx := opentracing.StartSpanFromContext(ctx, "(*imageRouter).postImagesCreate")
+	defer sp.Finish()
+
 	if err := httputils.ParseForm(r); err != nil {
 		return err
 	}

@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/docker/docker/pkg/progress"
+	"github.com/opentracing/opentracing-go"
 	"golang.org/x/net/context"
 )
 
@@ -36,7 +37,7 @@ type Watcher struct {
 
 // Transfer represents an in-progress transfer.
 type Transfer interface {
-	Watch(progressOutput progress.Output) *Watcher
+	Watch(ctx context.Context, progressOutput progress.Output) *Watcher
 	Release(*Watcher)
 	Context() context.Context
 	Close()
@@ -137,7 +138,9 @@ func (t *transfer) Broadcast(masterProgressChan <-chan progress.Progress) {
 
 // Watch adds a watcher to the transfer. The supplied channel gets progress
 // updates and is closed when the transfer finishes.
-func (t *transfer) Watch(progressOutput progress.Output) *Watcher {
+func (t *transfer) Watch(ctx context.Context, progressOutput progress.Output) *Watcher {
+	sp, ctx := opentracing.StartSpanFromContext(ctx, "(*transfer).Watch")
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -150,6 +153,7 @@ func (t *transfer) Watch(progressOutput progress.Output) *Watcher {
 	t.watchers[w.releaseChan] = w
 
 	if t.broadcastDone {
+		sp.Finish()
 		close(w.running)
 		return w
 	}
@@ -157,6 +161,7 @@ func (t *transfer) Watch(progressOutput progress.Output) *Watcher {
 	go func() {
 		defer func() {
 			close(w.running)
+			sp.Finish()
 		}()
 		var (
 			done           bool
@@ -278,7 +283,7 @@ type TransferManager interface {
 	// Transfer checks if a transfer with the given key is in progress. If
 	// so, it returns progress and error output from that transfer.
 	// Otherwise, it will call xferFunc to initiate the transfer.
-	Transfer(key string, xferFunc DoFunc, progressOutput progress.Output) (Transfer, *Watcher)
+	Transfer(ctx context.Context, key string, xferFunc DoFunc, progressOutput progress.Output) (Transfer, *Watcher)
 }
 
 type transferManager struct {
@@ -301,9 +306,12 @@ func NewTransferManager(concurrencyLimit int) TransferManager {
 // Transfer checks if a transfer matching the given key is in progress. If not,
 // it starts one by calling xferFunc. The caller supplies a channel which
 // receives progress output from the transfer.
-func (tm *transferManager) Transfer(key string, xferFunc DoFunc, progressOutput progress.Output) (Transfer, *Watcher) {
+func (tm *transferManager) Transfer(ctx context.Context, key string, xferFunc DoFunc, progressOutput progress.Output) (Transfer, *Watcher) {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
+
+	sp, ctx := opentracing.StartSpanFromContext(ctx, "(*transferManager).Transfer")
+	defer sp.Finish()
 
 	for {
 		xfer, present := tm.transfers[key]
@@ -311,10 +319,11 @@ func (tm *transferManager) Transfer(key string, xferFunc DoFunc, progressOutput 
 			break
 		}
 		// Transfer is already in progress.
-		watcher := xfer.Watch(progressOutput)
+		watcher := xfer.Watch(ctx, progressOutput)
 
 		select {
 		case <-xfer.Context().Done():
+			defer sp.Finish()
 			// We don't want to watch a transfer that has been cancelled.
 			// Wait for it to be removed from the map and try again.
 			xfer.Release(watcher)
@@ -346,7 +355,7 @@ func (tm *transferManager) Transfer(key string, xferFunc DoFunc, progressOutput 
 
 	masterProgressChan := make(chan progress.Progress)
 	xfer := xferFunc(masterProgressChan, start, inactive)
-	watcher := xfer.Watch(progressOutput)
+	watcher := xfer.Watch(ctx, progressOutput)
 	go xfer.Broadcast(masterProgressChan)
 	tm.transfers[key] = xfer
 
