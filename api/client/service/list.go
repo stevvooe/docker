@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"text/tabwriter"
 
@@ -71,11 +72,21 @@ func printTable(out io.Writer, services []swarm.Service) {
 	// Ignore flushing errors
 	defer writer.Flush()
 
-	fmt.Fprintf(writer, listItemFmt, "ID", "NAME", "REPLICAS", "IMAGE", "COMMAND")
+	banana := os.Getenv("SWARM_SCALE")
+	if banana != "" {
+		fmt.Fprintf(writer, listItemFmt, "ID", "NAME", "REPLICAS", "SCALE", "IMAGE", "COMMAND")
+	} else {
+		fmt.Fprintf(writer, listItemFmt, "ID", "NAME", "REPLICAS", "IMAGE", "COMMAND")
+	}
+
 	for _, service := range services {
 		scale := ""
 		if service.Spec.Mode.Replicated != nil && service.Spec.Mode.Replicated.Replicas != nil {
-			scale = fmt.Sprintf("%d", *service.Spec.Mode.Replicated.Replicas)
+			if banana != "" {
+				scale = fmt.Sprintf("%d\t🍌", *service.Spec.Mode.Replicated.Replicas)
+			} else {
+				scale = fmt.Sprintf("%d", *service.Spec.Mode.Replicated.Replicas)
+			}
 		} else if service.Spec.Mode.Global != nil {
 			scale = "global"
 		}
